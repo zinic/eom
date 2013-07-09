@@ -1,0 +1,2 @@
+[keystone:rbac]
+rule_file = rbac.json-sample

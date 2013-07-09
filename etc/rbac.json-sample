@@ -1,0 +1,38 @@
+[
+    {
+        "resource": "queues",
+        "route": "/v1/queues(/[^/]+)?",
+        "acl": {
+            "read": [
+                "identity:user-admin",
+                "admin",
+                "queuing:admin",
+                "queuing:creator",
+                "creator",
+                "queuing:observer",
+                "observer"
+            ],
+            "write": [
+                "identity:user-admin",
+                "admin",
+                "queuing:admin",
+                "queuing:creator",
+                "queuing:producer",
+                "creator"
+            ],
+            "delete": [
+                "identity:user-admin",
+                "admin",
+                "queuing:admin",
+                "queuing:gc"
+            ]
+        }
+    },
+    {
+        "resource": "health",
+        "route": "/v1/health",
+        "acl": {
+            "read": ["identity:ops"]
+        }
+    }
+]

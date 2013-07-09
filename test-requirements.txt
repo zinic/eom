@@ -1,0 +1,14 @@
+# Packaging
+distribute>=0.6.24
+
+# Unit testing
+testtools
+
+# Test runner
+nose
+nose-exclude
+openstack.nose_plugin
+
+# Metrics and style
+coverage
+hacking
