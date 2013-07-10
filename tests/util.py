@@ -41,15 +41,22 @@ class TestCase(testtools.TestCase):
         parent = os.path.dirname(module_dir)
         return os.path.join(parent, 'etc', filename)
 
-    def create_env(self, path, roles=None, method='GET'):
-        if not isinstance(roles, str):
-            roles = ','.join(roles or [])
-
-        return {
-            'HTTP_X_ROLES': roles,
+    def create_env(self, path, roles=None, project_id=None, method='GET'):
+        env = {
             'PATH_INFO': path,
             'REQUEST_METHOD': method
         }
+
+        if project_id is not None:
+            env['HTTP_X_PROJECT_ID'] = project_id
+
+        if roles is not None:
+            if not isinstance(roles, str):
+                roles = ','.join(roles or [])
+
+            env['HTTP_X_ROLES'] = roles
+
+        return env
 
     def start_response(self, status, headers):
         self.status = status

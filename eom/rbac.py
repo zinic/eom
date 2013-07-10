@@ -23,11 +23,10 @@ import simplejson as json
 LOG = logging.getLogger(__name__)
 CONF = cfg.CONF
 
-OPT_GROUP_NAME = 'eom'
-OPTION_NAME = 'rbac_file'
+OPT_GROUP_NAME = 'eom:rbac'
+OPTION_NAME = 'acls_file'
 
-CONF.register_opt(cfg.StrOpt(OPTION_NAME, default=[]),
-                  group=OPT_GROUP_NAME)
+CONF.register_opt(cfg.StrOpt(OPTION_NAME), group=OPT_GROUP_NAME)
 
 EMPTY_SET = set()
 

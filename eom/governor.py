@@ -16,6 +16,7 @@
 
 import logging
 import re
+import time
 
 from oslo.config import cfg
 import simplejson as json
@@ -23,19 +24,25 @@ import simplejson as json
 LOG = logging.getLogger(__name__)
 CONF = cfg.CONF
 
-OPT_GROUP_NAME = 'eom'
-OPTION_NAME = 'governor_file'
+OPT_GROUP_NAME = 'eom:governor'
+OPTIONS = [
+    cfg.StrOpt('rates_file'),
+    cfg.IntOpt('node_count'),
+    cfg.IntOpt('period_sec'),
+    cfg.IntOpt('sleep_threshold', default=1),
+]
 
-CONF.register_opt(cfg.StrOpt(OPTION_NAME, default=[]),
-                  group=OPT_GROUP_NAME)
+CONF.register_opts(OPTIONS, group=OPT_GROUP_NAME)
 
 
 class Rate(object):
     """Represents an individual rate configuration."""
 
-    __slots__ = ('name', 'route', 'methods', 'limit')
+    # NOTE(kgriffs): Hard-code slots to make attribute
+    # access faster.
+    __slots__ = ('name', 'route', 'methods', 'limit', 'target')
 
-    def __init__(self, document):
+    def __init__(self, document, period_sec, node_count):
         """Initializes attributes.
 
         :param dict document:
@@ -52,6 +59,7 @@ class Rate(object):
             self.methods = None
 
         self.limit = document['limit']
+        self.target = float(self.limit) / period_sec / node_count
 
     def applies_to(self, method, path):
         """Determines whether this rate applies to a given request.
@@ -68,19 +76,75 @@ class Rate(object):
         return True
 
 
-def _load_rates(path):
+def _load_rates(path, period_sec, node_count):
     full_path = CONF.find_file(path)
     if not full_path:
-        raise cfg.ConfigFilesNotFoundError([path])
+        raise cfg.ConfigFilesNotFoundError([path or '<Empty>'])
 
     with open(full_path) as fd:
         document = json.load(fd)
 
-    node_count = document['node_count']
-    period_sec = document['period_sec']
-    rates = [Rate(rate_doc) for rate_doc in document['rates']]
+    return [Rate(rate_doc, period_sec, node_count) for rate_doc in document]
 
-    return node_count, period_sec, rates
+
+def _create_calc_sleep(period_sec, counters, sleep_threshold):
+    """Creates a closure with the given params for convenience and perf."""
+
+    def calc_sleep(project_id, rate):
+        # Alternate between two buckets of
+        # counters using a time function.
+        now = int(time.time())
+        normalized = now % (period_sec * 2)
+
+        if normalized < period_sec:
+            current_bucket = 'a'
+            previous_bucket = 'b'
+        else:
+            current_bucket = 'b'
+            previous_bucket = 'a'
+
+        # Update counter
+        counter_key = project_id + ':' + current_bucket
+        try:
+            current_count = counters[counter_key]
+            counters[counter_key] = current_count + 1
+        except KeyError:
+            current_count = 1
+            counters[counter_key] = 1
+
+        # See if we need to rate-limit based on previous_bucket
+        counter_key = project_id + ':' + previous_bucket
+        try:
+            previous_counter = counters[counter_key]
+        except KeyError:
+            previous_counter = 0
+
+        if previous_counter > rate.limit:
+            # If they had been doing requests at
+            # rate.limit then how long would it have
+            # taken for them to submit the same
+            # number of requests?
+            normal_sec = float(previous_counter) / rate.target
+
+            # Slow them down so they can only do
+            # rate.limit during period_sec
+            seconds_over = period_sec - normal_sec
+            sleep_per_request = seconds_over / previous_counter
+
+            # Now, the per-request pause may be too small to sleep
+            # on, so we chunk it up over multiple requests
+            if sleep_per_request < sleep_threshold:
+                batch_size = int(sleep_threshold / sleep_per_request)
+                sleep_per_request = sleep_threshold
+            else:
+                batch_size = 1
+
+            if current_count % batch_size == 0:
+                return sleep_per_request
+
+        return 0
+
+    return calc_sleep
 
 
 def _http_429(start_response):
@@ -113,8 +177,16 @@ def wrap(app):
     :returns: a new WSGI app that wraps the original
     """
     group = CONF[OPT_GROUP_NAME]
-    rates_path = group[OPTION_NAME]
-    node_count, period_sec, rates = _load_rates(rates_path)
+
+    node_count = group['node_count']
+    period_sec = group['period_sec']
+    sleep_threshold = group['sleep_threshold']
+
+    rates_path = group['rates_file']
+    rates = _load_rates(rates_path, period_sec, node_count)
+
+    counters = {}
+    calc_sleep = _create_calc_sleep(period_sec, counters, sleep_threshold)
 
     # WSGI callable
     def middleware(env, start_response):
@@ -125,7 +197,7 @@ def wrap(app):
             if rate.applies_to(method, path):
                 break
         else:
-            LOG.debug(_('Requested path not recognized. Not limiting.'))
+            LOG.debug(_('Requested path not recognized. Full steam ahead!'))
             return app(env, start_response)
 
         try:
@@ -134,9 +206,13 @@ def wrap(app):
             LOG.error(_('Request headers did not include X-Project-ID'))
             return _http_400(start_response)
 
-        # Do the rate limiting here
+        delay = calc_sleep(project_id, rate)
 
-        # Stay calm and carry on
+        if delay != 0:
+            # Stay calm...
+            time.sleep(delay)
+
+        # ...and carry on.
         return app(env, start_response)
 
     return middleware

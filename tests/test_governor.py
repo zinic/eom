@@ -29,3 +29,8 @@ class TestGovernor(util.TestCase):
         env = self.create_env('/v1')
         self.governor(env, self.start_response)
         self.assertEquals(self.status, '400 Bad Request')
+
+    def test_simple(self):
+        env = self.create_env('/v1', project_id='84197')
+        self.governor(env, self.start_response)
+        self.assertEquals(self.status, '204 No Content')

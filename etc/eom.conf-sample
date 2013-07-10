@@ -1,3 +1,7 @@
-[eom]
-rbac_file = rbac.json-sample
-governor_file = governor.json-sample
+[eom:rbac]
+acls_file = rbac.json-sample
+
+[eom:governor]
+rates_file = governor.json-sample
+node_count = 10
+period_sec = 5
