@@ -14,11 +14,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import eom.governor
+from tests import util
 
-def _http_429(start_response):
-    """Responds with HTTP 429."""
-    start_response('429 Too Many Requests', [('Content-Length', '0')])
 
-    # TODO(kgriffs): Return a helpful message in JSON or XML, depending
-    # on the accept header.
-    return []
+class TestGovernor(util.TestCase):
+
+    def setUp(self):
+        super(TestGovernor, self).setUp()
+
+        self.governor = eom.governor.wrap(util.app)
+
+    def test_missing_project_id(self):
+        env = self.create_env('/v1')
+        self.governor(env, self.start_response)
+        self.assertEquals(self.status, '400 Bad Request')

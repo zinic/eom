@@ -23,9 +23,10 @@ import simplejson as json
 LOG = logging.getLogger(__name__)
 CONF = cfg.CONF
 
-OPT_GROUP_NAME = 'keystone:rbac'
+OPT_GROUP_NAME = 'eom'
+OPTION_NAME = 'rbac_file'
 
-CONF.register_opt(cfg.StrOpt('rule_file', default=[]),
+CONF.register_opt(cfg.StrOpt(OPTION_NAME, default=[]),
                   group=OPT_GROUP_NAME)
 
 EMPTY_SET = set()
@@ -34,7 +35,7 @@ EMPTY_SET = set()
 def _load_rules(path):
     full_path = CONF.find_file(path)
     if not full_path:
-        raise cfg.ConfigFilesNotFoundError(path=path)
+        raise cfg.ConfigFilesNotFoundError([path])
 
     with open(full_path) as fd:
         return json.load(fd)
@@ -90,8 +91,8 @@ def wrap(app):
     :param app: WSGI app to wrap
     :returns: a new WSGI app that wraps the original
     """
-    rbac_config = CONF[OPT_GROUP_NAME]
-    rules_path = rbac_config['rule_file']
+    group = CONF[OPT_GROUP_NAME]
+    rules_path = group[OPTION_NAME]
     rules = _load_rules(rules_path)
     acl_map = _create_acl_map(rules)
 
@@ -126,6 +127,9 @@ def wrap(app):
             # Stay calm and carry on
             return app(env, start_response)
 
+        LOG.info(
+            _('User not authorized to %(method)s the %(resource)s resource') %
+            dict(method=method, resource=resource))
         return _http_forbidden(start_response)
 
     return middleware

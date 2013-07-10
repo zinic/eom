@@ -1,0 +1,16 @@
+{
+    "node_count": 10,
+    "period_sec": 300,
+    "rates": [
+        {
+            "name": "get_messages",
+            "route": "/v1/queues/[^/]+/messages",
+            "methods": ["GET"],
+            "limit": 300000
+        },
+        {
+            "name": "default",
+            "limit": 150000
+        }
+    ]
+}

@@ -1,2 +1,3 @@
-[keystone:rbac]
-rule_file = rbac.json-sample
+[eom]
+rbac_file = rbac.json-sample
+governor_file = governor.json-sample
