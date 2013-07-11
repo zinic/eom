@@ -206,11 +206,25 @@ def wrap(app):
             LOG.error(_('Request headers did not include X-Project-ID'))
             return _http_400(start_response)
 
-        delay = calc_sleep(project_id, rate)
+        sleep_sec = calc_sleep(project_id, rate)
 
-        if delay != 0:
-            # Stay calm...
-            time.sleep(delay)
+        if sleep_sec != 0:
+            if LOG.getEffectiveLevel() == logging.DEBUG:
+                logline = _('Sleeping %(sleep_sec)f sec. for '
+                            'project %(project_id)s to limit '
+                            'rate to %(limit)d according to '
+                            'rate rule "%(name)s"')
+                vars = {
+                    'sleep_sec': sleep_sec,
+                    'project_id': project_id,
+                    'limit': rate.limit,
+                    'name': rate.name,
+                }
+
+                LOG.debug(logline % vars)
+
+            # Keep calm...
+            time.sleep(sleep_sec)
 
         # ...and carry on.
         return app(env, start_response)

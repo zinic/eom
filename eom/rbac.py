@@ -123,12 +123,12 @@ def wrap(app):
         # The user must have one of the roles that
         # is authorized for the requested method.
         if (authorized_roles & given_roles):
-            # Stay calm and carry on
+            # Carry on
             return app(env, start_response)
 
-        LOG.info(
-            _('User not authorized to %(method)s the %(resource)s resource') %
-            dict(method=method, resource=resource))
+        logline = _('User not authorized to %(method)s '
+                    'the %(resource)s resource')
+        LOG.info(logline % {'method': method, 'resource': resource})
         return _http_forbidden(start_response)
 
     return middleware
