@@ -77,7 +77,10 @@ class TestGovernor(util.TestCase):
         elapsed = end - start
         self.assertAlmostEqual(elapsed, period_sec * 2, delta=2)
 
-    def test_limit_multiprocess(self):
+    def test_soft_limit_multiprocess(self):
+        self._test_limit_multiprocess(500, 204)
+
+    def _test_limit_multiprocess(self, limit, expected_status):
 
         def run_server():
             sys.stderr = io.BytesIO()  # Suppress logging
@@ -94,9 +97,9 @@ class TestGovernor(util.TestCase):
         time.sleep(0.1)
 
         node_count = 2
-        limit = 500 / node_count
+        limit /= node_count
         period_sec = 10
-        num_periods = 5
+        num_periods = 6
         sec_per_req = float(period_sec) / limit
         url = 'http://127.0.0.1:8783/v1/queues/408284/messages'
 
@@ -110,7 +113,14 @@ class TestGovernor(util.TestCase):
 
         while time.time() < stop:
             resp = requests.get(url, headers={'X-Project-ID': 1234})
-            self.assertEquals(resp.status_code, 204)
+
+            # elapsed = stop - time.time()
+            # if resp.status_code == 429:
+            #     import pdb; pdb.set_trace()
+            # if elapsed > period_sec:
+            #     self.assertEquals(resp.status_code, expected_status)
+
+            self.assertEquals(resp.status_code, expected_status)
 
             num_requests += 1
 

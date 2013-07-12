@@ -40,7 +40,14 @@ class Rate(object):
 
     # NOTE(kgriffs): Hard-code slots to make attribute
     # access faster.
-    __slots__ = ('name', 'route', 'methods', 'limit', 'target')
+    __slots__ = (
+        'name',
+        'route',
+        'methods',
+        'soft_limit',
+        'hard_limit',
+        'target',
+    )
 
     def __init__(self, document, period_sec, node_count):
         """Initializes attributes.
@@ -58,8 +65,9 @@ class Rate(object):
         else:
             self.methods = None
 
-        self.limit = document['limit'] / node_count
-        self.target = float(self.limit) / period_sec
+        self.soft_limit = document['soft_limit'] / node_count
+        self.hard_limit = document['hard_limit'] / node_count
+        self.target = float(self.soft_limit) / period_sec
 
     def applies_to(self, method, path):
         """Determines whether this rate applies to a given request.
@@ -74,6 +82,10 @@ class Rate(object):
             return False
 
         return True
+
+
+class HardLimitError(Exception):
+    pass
 
 
 def _load_rates(path, period_sec, node_count):
@@ -155,13 +167,16 @@ def _create_calc_sleep(period_sec, cache, sleep_threshold):
         current_count = cache.inc_counter(project_id, current_bucket)
         previous_count = cache.get_counter(project_id, previous_bucket)
 
-        if previous_count > rate.limit:
-            # If they had been doing requests at rate.limit then how
+        if previous_count > rate.hard_limit:
+            raise HardLimitError()
+
+        if previous_count > rate.soft_limit:
+            # If they had been doing requests at rate.soft_limit then how
             # long would it have taken for them to submit the same
             # number of requests?
             normalized_sec = float(previous_count) / rate.target
 
-            # Slow them down so they can only do rate.limit during
+            # Slow them down so they can only do rate.soft_limit during
             # period_sec. Do this by delaying each request so that
             # taken together, all requests will take the amount of
             # time they should have taken had they followed the
@@ -257,7 +272,22 @@ def wrap(app):
             LOG.error(_('Request headers did not include X-Project-ID'))
             return _http_400(start_response)
 
-        sleep_sec = calc_sleep(project_id, rate)
+        try:
+            sleep_sec = calc_sleep(project_id, rate)
+        except HardLimitError:
+            if LOG.getEffectiveLevel() == logging.DEBUG:
+                logline = _('Hit hard limit of %(rate)d per sec. for '
+                            'project %(project_id)s according to '
+                            'rate rule "%(name)s"')
+                vars = {
+                    'rate': rate.hard_limit / rate.period_sec,
+                    'project_id': project_id,
+                    'name': rate.name,
+                }
+
+                LOG.debug(logline % vars)
+
+            return _http_429(start_response)
 
         if sleep_sec != 0:
             if LOG.getEffectiveLevel() == logging.DEBUG:
@@ -268,7 +298,7 @@ def wrap(app):
                 vars = {
                     'sleep_sec': sleep_sec,
                     'project_id': project_id,
-                    'limit': rate.limit,
+                    'limit': rate.soft_limit,
                     'name': rate.name,
                 }
 
