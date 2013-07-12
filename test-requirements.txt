@@ -12,3 +12,6 @@ openstack.nose_plugin
 # Metrics and style
 coverage
 hacking
+
+# Utils
+requests

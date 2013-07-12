@@ -3,5 +3,5 @@ acls_file = rbac.json-sample
 
 [eom:governor]
 rates_file = governor.json-sample
-node_count = 10
-period_sec = 5
+node_count = 2
+period_sec = 10

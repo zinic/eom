@@ -30,6 +30,44 @@ class TestCase(testtools.TestCase):
         self.config_file = self.conf_path('eom.conf-sample')
         CONF(args=[], default_config_files=[self.config_file])
 
+    # Copied from unittest2 for python 2.6 compat
+    # https://github.com/wildfuse/unittest2/blob/master/unittest2/case.py
+    def assertAlmostEqual(self, first, second, places=None,
+                          msg=None, delta=None):
+        """Fail if the two objects are unequal as determined by their
+           difference rounded to the given number of decimal places
+           (default 7) and comparing to zero, or by comparing that the
+           between the two objects is more than the given delta.
+
+           Note that decimal places (from zero) are usually not the same
+           as significant digits (measured from the most signficant digit).
+
+           If the two objects compare equal then they will automatically
+           compare almost equal.
+        """
+        if first == second:
+            # shortcut
+            return
+        if delta is not None and places is not None:
+            raise TypeError("specify delta or places not both")
+
+        if delta is not None:
+            if abs(first - second) <= delta:
+                return
+
+            standardMsg = '%s != %s within %s delta' % (first, second, delta)
+        else:
+            if places is None:
+                places = 7
+
+            if round(abs(second-first), places) == 0:
+                return
+
+            standardMsg = '%s != %s within %r places' % (first, second, places)
+
+        msg = self._formatMessage(msg, standardMsg)
+        raise self.failureException(msg)
+
     def conf_path(self, filename):
         """Returns the full path to the specified Marconi conf file.
 
@@ -65,3 +103,4 @@ class TestCase(testtools.TestCase):
 
 def app(env, start_response):
     start_response('204 No Content', [])
+    return []
