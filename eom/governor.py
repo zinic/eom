@@ -58,7 +58,7 @@ class Rate(object):
         else:
             self.methods = None
 
-        self.limit = document['limit']  # / node_count
+        self.limit = document['limit'] / node_count
         self.target = float(self.limit) / period_sec
 
     def applies_to(self, method, path):

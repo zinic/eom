@@ -48,7 +48,8 @@ class TestGovernor(util.TestCase):
         env = self.create_env('/v1/queues/fizbit/messages', project_id='84197')
 
         now = time.time()
-        limit = 500
+        node_count = 2
+        limit = 500 / node_count
         period_sec = 10
 
         # Go over the limit
@@ -92,7 +93,8 @@ class TestGovernor(util.TestCase):
         # Give the process a moment to start up
         time.sleep(0.1)
 
-        limit = 500
+        node_count = 2
+        limit = 500 / node_count
         period_sec = 10
         num_periods = 5
         sec_per_req = float(period_sec) / limit
@@ -115,6 +117,7 @@ class TestGovernor(util.TestCase):
             # Attempt 2x the rate limit
             time.sleep(sec_per_req / 2)
 
-        self.assertAlmostEqual(num_requests, limit * num_periods, delta=300)
+        self.assertAlmostEqual(num_requests, limit * num_periods,
+                               delta=(300 / node_count))
 
         process.terminate()
