@@ -29,7 +29,7 @@ OPTIONS = [
     cfg.StrOpt('rates_file'),
     cfg.IntOpt('node_count', default=1),
     cfg.IntOpt('period_sec', default=10),
-    cfg.FloatOpt('sleep_threshold', default=0.5),
+    cfg.FloatOpt('sleep_threshold', default=0.01),
 ]
 
 CONF.register_opts(OPTIONS, group=OPT_GROUP_NAME)
@@ -133,6 +133,10 @@ class Cache(object):
         except KeyError:
             return 0
 
+    def reset_counter(self, project_id, bucket):
+        key = _get_counter_key(project_id, bucket)
+        self.store[key] = 0
+
     def set_throttle(self, project_id, period_sec):
         key = _get_throttle_key(project_id)
         self.store[key] = time.time() + period_sec
@@ -151,6 +155,8 @@ class Cache(object):
 def _create_calc_sleep(period_sec, cache, sleep_threshold):
     """Creates a closure with the given params for convenience and perf."""
 
+    ctx = {'last_bucket': None}
+
     def calc_sleep(project_id, rate):
         # Alternate between two buckets of
         # counters using a time function.
@@ -163,6 +169,10 @@ def _create_calc_sleep(period_sec, cache, sleep_threshold):
         else:
             current_bucket = 'b'
             previous_bucket = 'a'
+
+        if ctx['last_bucket'] != current_bucket:
+            cache.reset_counter(project_id, current_bucket)
+            ctx['last_bucket'] = current_bucket
 
         current_count = cache.inc_counter(project_id, current_bucket)
         previous_count = cache.get_counter(project_id, previous_bucket)
@@ -186,9 +196,7 @@ def _create_calc_sleep(period_sec, cache, sleep_threshold):
             # Allow the rate to slightly exceed the limit so
             # that when we cross over to the next time epoch,
             # we will continue throttling. Otherwise, we can
-            # thrash between throttling and not throttling due
-            # to the fuzzy nature of our edge trigger which
-            # switches buckets.
+            # thrash between throttling and not throttling.
             sleep_offset = (0.2 / previous_count)
 
             # Now, the per-request pause may be too small to sleep
@@ -202,7 +210,8 @@ def _create_calc_sleep(period_sec, cache, sleep_threshold):
 
                 # Only sleep every N requests
                 if current_count % batch_size == 0:
-                    return sleep_threshold - (sleep_offset * batch_size)
+                    sleep_sec = sleep_per_request * batch_size
+                    return sleep_sec - (sleep_offset * batch_size)
 
             else:
                 # Sleep on every request

@@ -34,6 +34,25 @@ class TestGovernor(util.TestCase):
 
         self.governor = eom.governor.wrap(util.app)
 
+        config = eom.governor.CONF['eom:governor']
+        self.node_count = config['node_count']
+        self.period_sec = config['period_sec']
+        rates = eom.governor._load_rates(config['rates_file'],
+                                         self.period_sec, self.node_count)
+
+        self.test_rate = rates[0]
+        self.soft_limit = self.test_rate.soft_limit
+        self.hard_limit = self.test_rate.hard_limit
+        self.test_url = '/v1/queues/fizbit/messages'
+
+    def _quantum_leap(self):
+        # Wait until the next time quantum
+        normalized = time.time() % (self.period_sec * 2)
+        if normalized < self.period_sec:
+            time.sleep(self.period_sec - normalized)
+        else:
+            time.sleep(self.period_sec * 2 - normalized)
+
     def test_missing_project_id(self):
         env = self.create_env('/v1')
         self.governor(env, self.start_response)
@@ -44,41 +63,35 @@ class TestGovernor(util.TestCase):
         self.governor(env, self.start_response)
         self.assertEquals(self.status, '204 No Content')
 
-    def test_limit(self):
-        env = self.create_env('/v1/queues/fizbit/messages', project_id='84197')
-
-        now = time.time()
-        node_count = 2
-        limit = 500 / node_count
-        period_sec = 10
+    def test_soft_limit(self):
+        env = self.create_env(self.test_url, project_id='84197')
 
         # Go over the limit
-        for i in range(limit * 2):
+        num_requests = self.soft_limit * 2
+        for i in range(num_requests):
             self.governor(env, self.start_response)
             self.assertEquals(self.status, '204 No Content')
 
-        # Wait until the next time quantum
-        normalized = now % (period_sec * 2)
-        if normalized < period_sec:
-            time.sleep(period_sec - normalized)
-        else:
-            time.sleep(period_sec * 2 - normalized)
-
         # This time we should get throttled since in
         # the previous quantum we exceeded the limit
+        self._quantum_leap()
+
         start = time.time()
 
-        for i in range(limit * 2):
+        for i in range(num_requests):
             self.governor(env, self.start_response)
             self.assertEquals(self.status, '204 No Content')
 
         end = time.time()
 
         elapsed = end - start
-        self.assertAlmostEqual(elapsed, period_sec * 2, delta=2)
+        self.assertAlmostEqual(elapsed, self.period_sec * 2, delta=2)
 
     def test_soft_limit_multiprocess(self):
-        self._test_limit_multiprocess(500, 204)
+        self._test_limit_multiprocess(self.soft_limit, 204)
+
+    def test_hard_limit_multiprocess(self):
+        self._test_limit_multiprocess(self.hard_limit, 429)
 
     def _test_limit_multiprocess(self, limit, expected_status):
 
@@ -96,14 +109,9 @@ class TestGovernor(util.TestCase):
         # Give the process a moment to start up
         time.sleep(0.1)
 
-        node_count = 2
-        limit /= node_count
-        period_sec = 10
         num_periods = 6
-        sec_per_req = float(period_sec) / limit
-        url = 'http://127.0.0.1:8783/v1/queues/408284/messages'
-
-        stop = time.time() + period_sec * num_periods
+        sec_per_req = float(self.period_sec) / limit
+        url = 'http://127.0.0.1:8783' + self.test_url
 
         num_requests = 0
 
@@ -111,15 +119,16 @@ class TestGovernor(util.TestCase):
         requests_log = logging.getLogger("requests")
         requests_log.setLevel(logging.WARNING)
 
+        for i in range(limit + 5):
+            requests.get(url, headers={'X-Project-ID': 1234})
+
+        # Start out at the beginning of a time bucket
+        self._quantum_leap()
+
+        start = time.time()
+        stop = start + self.period_sec * num_periods
         while time.time() < stop:
             resp = requests.get(url, headers={'X-Project-ID': 1234})
-
-            # elapsed = stop - time.time()
-            # if resp.status_code == 429:
-            #     import pdb; pdb.set_trace()
-            # if elapsed > period_sec:
-            #     self.assertEquals(resp.status_code, expected_status)
-
             self.assertEquals(resp.status_code, expected_status)
 
             num_requests += 1
@@ -127,7 +136,10 @@ class TestGovernor(util.TestCase):
             # Attempt 2x the rate limit
             time.sleep(sec_per_req / 2)
 
-        self.assertAlmostEqual(num_requests, limit * num_periods,
-                               delta=(300 / node_count))
+        if expected_status == 204:
+            # We would have slept so we can predict
+            # the rate.
+            self.assertAlmostEqual(num_requests, limit * num_periods,
+                                   delta=(300 / self.node_count))
 
         process.terminate()

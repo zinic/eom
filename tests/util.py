@@ -65,14 +65,18 @@ class TestCase(testtools.TestCase):
 
             standardMsg = '%s != %s within %r places' % (first, second, places)
 
-        msg = self._formatMessage(msg, standardMsg)
+        if msg is None:
+            msg = standardMsg
+        else:
+            msg = standardMsg + ' : ' + msg
+
         raise self.failureException(msg)
 
     def conf_path(self, filename):
-        """Returns the full path to the specified Marconi conf file.
+        """Returns the full path to the specified conf file.
 
         :param filename: Name of the conf file to find (e.g.,
-                         'wsgi_memory.conf')
+                         'eom.conf')
         """
 
         module_dir = os.path.abspath(os.path.dirname(__file__))
