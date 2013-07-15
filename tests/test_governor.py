@@ -45,6 +45,8 @@ class TestGovernor(util.TestCase):
         self.hard_limit = self.test_rate.hard_limit
         self.test_url = '/v1/queues/fizbit/messages'
 
+        self.default_rate = rates[1]
+
     def _quantum_leap(self):
         # Wait until the next time quantum
         normalized = time.time() % (self.period_sec * 2)
@@ -64,10 +66,29 @@ class TestGovernor(util.TestCase):
         self.assertEquals(self.status, '204 No Content')
 
     def test_soft_limit(self):
-        env = self.create_env(self.test_url, project_id='84197')
+        elapsed = self._test_soft_limit(self.soft_limit, 'GET')
+        self.assertAlmostEqual(elapsed, self.period_sec * 2, delta=2)
+
+    def test_soft_limit_default(self):
+        elapsed = self._test_soft_limit(self.default_rate.soft_limit, 'PUT')
+        self.assertAlmostEqual(elapsed, self.period_sec * 2, delta=2)
+
+    def test_soft_limit_multiprocess(self):
+        self._test_limit_multiprocess(self.soft_limit, 204)
+
+    def test_hard_limit_multiprocess(self):
+        self._test_limit_multiprocess(self.hard_limit, 429)
+
+    #----------------------------------------------------------------------
+    # Helpers
+    #----------------------------------------------------------------------
+
+    def _test_soft_limit(self, soft_limit, http_method):
+        env = self.create_env(self.test_url, project_id='84197',
+                              method=http_method)
 
         # Go over the limit
-        num_requests = self.soft_limit * 2
+        num_requests = soft_limit * 2
         for i in range(num_requests):
             self.governor(env, self.start_response)
             self.assertEquals(self.status, '204 No Content')
@@ -85,13 +106,8 @@ class TestGovernor(util.TestCase):
         end = time.time()
 
         elapsed = end - start
-        self.assertAlmostEqual(elapsed, self.period_sec * 2, delta=2)
 
-    def test_soft_limit_multiprocess(self):
-        self._test_limit_multiprocess(self.soft_limit, 204)
-
-    def test_hard_limit_multiprocess(self):
-        self._test_limit_multiprocess(self.hard_limit, 429)
+        return elapsed
 
     def _test_limit_multiprocess(self, limit, expected_status):
 
@@ -140,6 +156,6 @@ class TestGovernor(util.TestCase):
             # We would have slept so we can predict
             # the rate.
             self.assertAlmostEqual(num_requests, limit * num_periods,
-                                   delta=(300 / self.node_count))
+                                   delta=(200 / self.node_count))
 
         process.terminate()
