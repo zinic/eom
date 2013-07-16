@@ -3,12 +3,12 @@
         "name": "get_messages",
         "route": "/v1/queues/[^/]+/messages",
         "methods": ["GET"],
-        "soft_limit": 50,
-        "hard_limit": 100
+        "soft_limit": 200,
+        "hard_limit": 350
     },
     {
         "name": "default",
-        "soft_limit": 25,
-        "hard_limit": 100
+        "soft_limit": 100,
+        "hard_limit": 250
     }
 ]

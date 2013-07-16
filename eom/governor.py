@@ -28,8 +28,10 @@ OPT_GROUP_NAME = 'eom:governor'
 OPTIONS = [
     cfg.StrOpt('rates_file'),
     cfg.IntOpt('node_count', default=1),
-    cfg.IntOpt('period_sec', default=10),
-    cfg.FloatOpt('sleep_threshold', default=0.01),
+    cfg.IntOpt('period_sec', default=5),
+    cfg.FloatOpt('max_sleep_sec', default=0.5),
+    cfg.FloatOpt('sleep_threshold', default=0.1),
+    cfg.FloatOpt('sleep_offset', default=0.99),
 ]
 
 CONF.register_opts(OPTIONS, group=OPT_GROUP_NAME)
@@ -65,8 +67,8 @@ class Rate(object):
         else:
             self.methods = None
 
-        self.soft_limit = document['soft_limit'] / node_count
         self.hard_limit = document['hard_limit'] / node_count
+        self.soft_limit = document['soft_limit'] / node_count
         self.target = float(self.soft_limit) / period_sec
 
     def applies_to(self, method, path):
@@ -152,7 +154,7 @@ class Cache(object):
         return now < throttle_until
 
 
-def _create_calc_sleep(period_sec, cache, sleep_threshold):
+def _create_calc_sleep(period_sec, cache, sleep_threshold, sleep_offset):
     """Creates a closure with the given params for convenience and perf."""
 
     ctx = {'last_bucket': None}
@@ -190,14 +192,15 @@ def _create_calc_sleep(period_sec, cache, sleep_threshold):
             # period_sec. Do this by delaying each request so that
             # taken together, all requests will take the amount of
             # time they should have taken had they followed the
-            # limit during the last time quantum.
-            sleep_per_request = normalized_sec / previous_count
+            # limit during the last time period.
+            extra_sec = normalized_sec - period_sec
+            sleep_per_request = extra_sec / previous_count
 
             # Allow the rate to slightly exceed the limit so
             # that when we cross over to the next time epoch,
             # we will continue throttling. Otherwise, we can
             # thrash between throttling and not throttling.
-            sleep_offset = (0.2 / previous_count)
+            sleep_per_request *= sleep_offset
 
             # Now, the per-request pause may be too small to sleep
             # on, so we chunk it up over multiple requests. If
@@ -205,21 +208,28 @@ def _create_calc_sleep(period_sec, cache, sleep_threshold):
             # accurate as well as introducing too much context-
             # switching overhead that could affect other requests
             # not related to this project ID.
-            if sleep_per_request < sleep_threshold:
+            if sleep_per_request < sleep_threshold and False:
                 batch_size = int(sleep_threshold / sleep_per_request)
 
                 # Only sleep every N requests
                 if current_count % batch_size == 0:
-                    sleep_sec = sleep_per_request * batch_size
-                    return sleep_sec - (sleep_offset * batch_size)
+                    return sleep_per_request * batch_size
 
             else:
                 # Sleep on every request
-                return sleep_per_request - sleep_offset
+                return sleep_per_request
 
         return 0
 
     return calc_sleep
+
+
+def _log(level, message, **vars):
+    """Logs at the given level with short-circuiting."""
+    if LOG.getEffectiveLevel() != level:
+        return
+
+    LOG.log(level, message % vars)
 
 
 def _http_429(start_response):
@@ -255,13 +265,16 @@ def wrap(app):
 
     node_count = group['node_count']
     period_sec = group['period_sec']
+    max_sleep_sec = group['max_sleep_sec']
     sleep_threshold = group['sleep_threshold']
+    sleep_offset = group['sleep_offset']
 
     rates_path = group['rates_file']
     rates = _load_rates(rates_path, period_sec, node_count)
 
     cache = Cache()
-    calc_sleep = _create_calc_sleep(period_sec, cache, sleep_threshold)
+    calc_sleep = _create_calc_sleep(period_sec, cache,
+                                    sleep_threshold, sleep_offset)
 
     # WSGI callable
     def middleware(env, start_response):
@@ -284,34 +297,34 @@ def wrap(app):
         try:
             sleep_sec = calc_sleep(project_id, rate)
         except HardLimitError:
-            if LOG.getEffectiveLevel() == logging.DEBUG:
-                logline = _('Hit hard limit of %(rate)d per sec. for '
-                            'project %(project_id)s according to '
-                            'rate rule "%(name)s"')
-                vars = {
-                    'rate': rate.hard_limit / rate.period_sec,
-                    'project_id': project_id,
-                    'name': rate.name,
-                }
+            message = _('Hit hard limit of %(rate)d per sec. for '
+                        'project %(project_id)s according to '
+                        'rate rule "%(name)s"')
 
-                LOG.debug(logline % vars)
+            hard_rate = rate.hard_limit / period_sec
+            _log(logging.DEBUG, message, rate=hard_rate, project_id=project_id,
+                 name=rate.name)
+
+            return _http_429(start_response)
+
+        if sleep_sec > max_sleep_sec:
+            message = _('Sleep time of %(sleep_sec)f sec. for '
+                        'project %(project_id)s exceeded max'
+                        'sleep time of %(max_sleep_sec)f sec.')
+
+            _log(logging.DEBUG, message, sleep_sec=sleep_sec,
+                 project_id=project_id, max_sleep_sec=max_sleep_sec)
 
             return _http_429(start_response)
 
         if sleep_sec != 0:
-            if LOG.getEffectiveLevel() == logging.DEBUG:
-                logline = _('Sleeping %(sleep_sec)f sec. for '
-                            'project %(project_id)s to limit '
-                            'rate to %(limit)d according to '
-                            'rate rule "%(name)s"')
-                vars = {
-                    'sleep_sec': sleep_sec,
-                    'project_id': project_id,
-                    'limit': rate.soft_limit,
-                    'name': rate.name,
-                }
+            message = _('Sleeping %(sleep_sec)f sec. for '
+                        'project %(project_id)s to limit '
+                        'rate to %(limit)d according to '
+                        'rate rule "%(name)s"')
 
-                LOG.debug(logline % vars)
+            _log(logging.DEBUG, message, sleep_sec=sleep_sec,
+                 project_id=project_id, limit=rate.soft_limit, name=rate.name)
 
             # Keep calm...
             time.sleep(sleep_sec)

@@ -66,50 +66,28 @@ class TestGovernor(util.TestCase):
         self.assertEquals(self.status, '204 No Content')
 
     def test_soft_limit(self):
-        elapsed = self._test_soft_limit(self.soft_limit, 'GET')
-        self.assertAlmostEqual(elapsed, self.period_sec * 2, delta=2)
+        self._test_limit(self.soft_limit, 204)
+
+    def test_soft_limit_burst(self):
+        self._test_limit(self.soft_limit, 204, burst=True)
 
     def test_soft_limit_default(self):
-        elapsed = self._test_soft_limit(self.default_rate.soft_limit, 'PUT')
-        self.assertAlmostEqual(elapsed, self.period_sec * 2, delta=2)
+        self._test_limit(self.default_rate.soft_limit, 204, 'PATCH')
 
-    def test_soft_limit_multiprocess(self):
-        self._test_limit_multiprocess(self.soft_limit, 204)
+    def test_hard_limit(self):
+        self._test_limit(self.hard_limit, 429)
 
-    def test_hard_limit_multiprocess(self):
-        self._test_limit_multiprocess(self.hard_limit, 429)
+    def test_hard_limit_burst(self):
+        self._test_limit(self.hard_limit, 429, burst=True)
 
     #----------------------------------------------------------------------
     # Helpers
     #----------------------------------------------------------------------
 
-    def _test_soft_limit(self, soft_limit, http_method):
-        env = self.create_env(self.test_url, project_id='84197',
-                              method=http_method)
+    def _test_limit(self, limit, expected_status,
+                    http_method='GET', burst=False):
 
-        # Go over the limit
-        num_requests = soft_limit * 2
-        for i in range(num_requests):
-            self.governor(env, self.start_response)
-            self.assertEquals(self.status, '204 No Content')
-
-        # This time we should get throttled since in
-        # the previous quantum we exceeded the limit
-        self._quantum_leap()
-
-        start = time.time()
-
-        for i in range(num_requests):
-            self.governor(env, self.start_response)
-            self.assertEquals(self.status, '204 No Content')
-
-        end = time.time()
-
-        elapsed = end - start
-
-        return elapsed
-
-    def _test_limit_multiprocess(self, limit, expected_status):
+        request = getattr(requests, http_method.lower())
 
         def run_server():
             sys.stderr = io.BytesIO()  # Suppress logging
@@ -125,37 +103,61 @@ class TestGovernor(util.TestCase):
         # Give the process a moment to start up
         time.sleep(0.1)
 
-        num_periods = 6
+        num_periods = 5
         sec_per_req = float(self.period_sec) / limit
         url = 'http://127.0.0.1:8783' + self.test_url
-
-        num_requests = 0
 
         # Suppress logging
         requests_log = logging.getLogger("requests")
         requests_log.setLevel(logging.WARNING)
 
-        for i in range(limit + 5):
-            requests.get(url, headers={'X-Project-ID': 1234})
-
         # Start out at the beginning of a time bucket
         self._quantum_leap()
 
+        if burst:
+            for i in range(limit + limit / 2):
+                request(url, headers={'X-Project-ID': 1234})
+
+            self._quantum_leap()
+
         start = time.time()
-        stop = start + self.period_sec * num_periods
-        while time.time() < stop:
-            resp = requests.get(url, headers={'X-Project-ID': 1234})
+        stop_1 = start + self.period_sec
+        stop_N = start + self.period_sec * num_periods
+
+        # Slightly exceed the limit
+        sleep_per_req = 0.7 * sec_per_req
+        batch_size = int(0.1 / sleep_per_req)
+        sleep_per_batch = batch_size * sleep_per_req
+
+        num_requests = 0
+        while time.time() < stop_1:
+            resp = request(url, headers={'X-Project-ID': 1234})
+
+            # Only sleep every N requests
+            num_requests += 1
+            if num_requests % batch_size == 0:
+                time.sleep(sleep_per_batch)
+
+        num_requests = 0
+        while time.time() < stop_N:
+            resp = request(url, headers={'X-Project-ID': 1234})
             self.assertEquals(resp.status_code, expected_status)
 
             num_requests += 1
 
-            # Attempt 2x the rate limit
-            time.sleep(sec_per_req / 2)
+            # Only sleep every N requests
+            if num_requests % batch_size == 0:
+                time.sleep(sleep_per_batch)
 
         if expected_status == 204:
             # We would have slept so we can predict
             # the rate.
-            self.assertAlmostEqual(num_requests, limit * num_periods,
-                                   delta=(200 / self.node_count))
+            expected = limit * (num_periods - 1)
+
+            # Expect that we allowed a slightly faster rate per the
+            # sleep_offset setting.
+            self.assertGreater(num_requests, expected)
+            self.assertAlmostEqual(num_requests, expected,
+                                   delta=(150 / self.node_count))
 
         process.terminate()

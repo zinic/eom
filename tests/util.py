@@ -30,6 +30,13 @@ class TestCase(testtools.TestCase):
         self.config_file = self.conf_path('eom.conf-sample')
         CONF(args=[], default_config_files=[self.config_file])
 
+    def assertGreater(self, left, right):
+        if left > right:
+            return
+
+        msg = '%s not greater than %s' % (left, right)
+        raise self.failureException(msg)
+
     # Copied from unittest2 for python 2.6 compat
     # https://github.com/wildfuse/unittest2/blob/master/unittest2/case.py
     def assertAlmostEqual(self, first, second, places=None,
