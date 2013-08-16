@@ -17,7 +17,7 @@
 from oslo.config import cfg
 import testtools
 
-import eom.uwsgi_server
+import eom.uwsgi_magic
 from tests import util
 
 CONF = cfg.CONF
@@ -25,4 +25,4 @@ CONF = cfg.CONF
 config_file = util.conf_path('eom.conf-sample')
 CONF(args=[], default_config_files=[config_file])
 
-app = application = eom.uwsgi_server.wrap(util.app)
+app = application = eom.uwsgi_magic.wrap(util.app)
